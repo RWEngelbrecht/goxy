@@ -1,0 +1,5 @@
+PORT=1337
+URL=http://localhost:8000
+CERT_URL=https://int.portal.nttltd.global.ntt/cmp/api/jwt/certs
+CERT=
+SIGNING_CERT=

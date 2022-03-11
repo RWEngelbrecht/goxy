@@ -1,54 +1,28 @@
 package main
 
 import (
+	"crypto/rsa"
+	"io/ioutil"
+	"net/http"
 	"net/http/httputil"
-  "encoding/json"
-  "io/ioutil"
-  "net/http"
-  "net/url"
-  //"bytes"
-  "log"
-  "os"
+	"net/url"
+	"time"
 
-  "github.com/joho/godotenv"
+	//"bytes"
+	"log"
+	"os"
+
+	"github.com/dgrijalva/jwt-go"
+	"github.com/joho/godotenv"
 )
 
-type SPCert struct {
-	Cert string `json:"certs"`
+type SPJwtInfo struct {
+	UserId string
 }
 
-func getListenAddress() string {
-	return ":" + os.Getenv("PORT")
-}
-
-func getProxyUrl() string {
-	return os.Getenv("URL")
-}
-
-
-func getSPCert() {
-	//TODO: make work w HTTPS
-	var spCert SPCert
-
-	endpoint := os.Getenv("CERT_URL")
-	req, _ := http.NewRequest("GET", endpoint, nil)
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		panic(err)
-	}
-	defer res.Body.Close()
-
-	body, err1 := ioutil.ReadAll(res.Body)
-	if err1 != nil {
-		panic(err1)
-	}
-
-	err2 := json.Unmarshal(body, &spCert)
-	if err2 != nil {
-		panic(err2)
-	}
-	log.Printf(spCert.Cert)
+type SPClaims struct {
+	*jwt.StandardClaims
+	SPJwtInfo SPJwtInfo
 }
 
 func logSetup() {
@@ -60,9 +34,50 @@ func logSetup() {
 
 func logRequestPayload(req *http.Request) {
 	log.Printf("[%s] %s", req.Method, req.URL.String())
-//	for head, val := range req.Header {
-//		log.Printf("%s: %s", head, val)
-//	}
+	for head, val := range req.Header {
+		log.Printf("%s: %s", head, val)
+	}
+}
+
+func getListenAddress() string {
+	return ":" + os.Getenv("PORT")
+}
+
+func getProxyUrl() string {
+	return os.Getenv("URL")
+}
+
+func getSigningCert(filePath string) ([]byte, error) {
+	return ioutil.ReadFile(filePath)
+}
+
+func createSPToken() (string, error) {
+	log.Println("Creating SP JWT")
+	// create signer for RS256
+	token := jwt.New(jwt.GetSigningMethod("RS256"))
+
+	var signKey *rsa.PrivateKey
+	// set claims
+	token.Claims = &SPClaims{
+		&jwt.StandardClaims{
+			//set expire time
+			ExpiresAt: time.Now().Add(time.Minute * 43200).Unix(),
+		},
+		SPJwtInfo{
+			UserId: os.Getenv("USER_ID"),
+		},
+	}
+
+	signCert, err := getSigningCert(os.Getenv("SIGNING_CERT"))
+	if err != nil {
+		log.Fatalln("createSPToken: getSigningCert: ", err)
+	}
+	signKey, err = jwt.ParseRSAPrivateKeyFromPEM(signCert)
+	if err != nil {
+		log.Fatalln("createSPToken: ParseRSAPrivateKeyFromPEM: ", err)
+	}
+
+	return token.SignedString(signKey)
 }
 
 // serve reverse proxy for given url
@@ -72,33 +87,39 @@ func serveReverseProxy(target string, res http.ResponseWriter, req *http.Request
 	proxy := httputil.NewSingleHostReverseProxy(url)
 
 	// update req headers
-	req.URL.Host = url.Host
-	req.URL.Scheme = url.Scheme
-	req.Header.Set("X-Insight-Token", "TODO:GET INSIGHT TOKEN")
-	req.Host = url.Host
+	req.Header.Set("X-Insight-Token", spJwt)
 	logRequestPayload(req)
-//	getSPCert()
+
 	proxy.ServeHTTP(res, req)
 }
 
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 	url := getProxyUrl()
+
 	serveReverseProxy(url, res, req)
 }
 
+var (
+	spJwt string
+)
+
 func main() {
-  err := godotenv.Load(".env")
-  if err != nil {
-    log.Fatalf("Fatal error (probably your fault): %s", err)
-  }
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatalf("Fatal error (probably your fault): %s", err)
+	}
 
 	//log .env values
 	logSetup()
 
+	spJwt, err = createSPToken()
+	if err != nil {
+		log.Fatalln("main: createSPToken: ", err)
+	}
+
 	//start server
 	http.HandleFunc("/", handleRequestAndRedirect)
 	if err := http.ListenAndServe(getListenAddress(), nil); err != nil {
-		panic(err)
+		log.Fatalln("main: ", err)
 	}
 }
-
