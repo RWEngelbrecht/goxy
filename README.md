@@ -16,7 +16,6 @@ A reverse proxy that adds a JWT header to an HTTP request.
 	SIGNING_CERT=<absolute path to cert used for signing jwt>
 	PUBLIC_CERT=<absolute path to cert used for decoding jwt>
 	USER_ID=<user id>
-	INSIGHT_URL=<url:port that insight-proxy runs on> 
 	```
 5. To run in Docker, run `$> make docker-up`
 
